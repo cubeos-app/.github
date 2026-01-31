@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/cubeos-app/.github/main/profile/cubeos-logo.png" alt="CubeOS Logo" width="120">
+  <img src="https://avatars.githubusercontent.com/u/257679218" alt="CubeOS Logo" width="120">
 </p>
 
 <h1 align="center">CubeOS</h1>
