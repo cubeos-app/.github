@@ -6,7 +6,7 @@
   <strong>The open-source server OS for Raspberry Pi and ARM64 edge devices</strong>
 </p>
 <p align="center">
-  <em>What Synology DSM is for NAS, CubeOS is for Raspberry Pi — with offline-first design,<br>self-healing containers, and expedition-grade hardware support.</em>
+  <em>What Synology DSM is for NAS, CubeOS is for Raspberry Pi — with offline-first design,<br>self-healing containers, and network-transparent hardware access across every node.</em>
 </p>
 <p align="center">
   <a href="https://github.com/cubeos-app/api"><img src="https://img.shields.io/badge/backend-Go_1.24-00ADD8?logo=go&logoColor=white" alt="Go"></a>
@@ -23,9 +23,9 @@
 
 ---
 
-CubeOS transforms a Raspberry Pi into a self-contained server with a consumer-friendly web dashboard, one-click app store, and a unique Hardware Abstraction Layer. Unlike other platforms that focus solely on home servers, CubeOS is built for **offline-first operation** — making it equally at home on your desk, in a remote field station, or aboard an expedition vehicle crossing the Sahara.
+CubeOS transforms a Raspberry Pi into a self-contained server with a consumer-friendly web dashboard, one-click app store, and a unique **Hardware Abstraction Layer** (HAL). Plug a GPS receiver into Node 1 and a LoRa radio into Node 2 — any container on any node can access both devices through a unified REST API, as if the hardware were local. CubeOS makes hardware location irrelevant.
 
-**Docker Swarm** provides self-healing containers with automatic reconciliation. If a service crashes at 3 AM, Swarm restarts it — no human intervention, no SSH, no scripts. Combined with a local Docker registry that caches images for offline installation, CubeOS runs reliably in environments where "just pull the latest image" isn't an option.
+Built for **offline-first operation**, CubeOS is equally at home on your desk, in a remote field station, or aboard an expedition vehicle crossing the Sahara. **Docker Swarm** provides self-healing containers with automatic reconciliation — if a service crashes at 3 AM, Swarm restarts it without human intervention. A local Docker registry caches images for offline installation, so CubeOS runs reliably where "just pull the latest image" isn't an option.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/cubeos-app/docs/main/assets/dashboard-preview.png" alt="CubeOS Dashboard" width="720">
@@ -35,15 +35,13 @@ CubeOS transforms a Raspberry Pi into a self-contained server with a consumer-fr
 
 ## Why CubeOS Exists
 
-The Raspberry Pi and ARM64 SBC ecosystem has lacked a serious, open-source server operating system — one that provides web management, container orchestration, and hardware integration without requiring a computer science degree to operate.
+Docker Swarm gives you self-healing containers, rolling updates, secrets management, and automatic workload scheduling. But it's **blind to hardware**. It can schedule based on CPU and RAM, but it has no idea that Node 1 has a Coral TPU plugged in, Node 2 has a Zigbee coordinator, and Node 3 has a GPS receiver. You can set node labels manually — but if someone moves the Coral from Node 1 to Node 3, the labels are wrong and your service deploys to the wrong place.
 
-Projects like CasaOS showed the world that a Raspberry Pi could be a personal server. But when its parent company shifted focus to proprietary, x86-only commercial products, the ARM and Raspberry Pi community was left without an actively maintained platform. Thousands of self-hosters on Raspberry Pi hardware found themselves on an abandoned codebase with 779 unresolved issues, no stable releases, and no upgrade path.
+CubeOS was born from this exact frustration. Docker Swarm had the orchestration features we needed. It just couldn't see the hardware underneath it. So we built the missing layer: a **Go daemon on each node** that auto-discovers all connected hardware, dynamically manages Swarm node labels via the Docker API, and exposes every device through REST endpoints that any container on any node can reach over the network.
 
-**CubeOS picks up where that vision left off — and goes further.**
+**The result:** Docker Swarm handles container lifecycle. The HAL gives Swarm eyes. Containers follow hardware automatically. And low-bandwidth devices like serial radios, GPS receivers, and satellite modems become network-transparent — accessible from any node in the cluster without moving the container to the device.
 
-Where previous platforms used Docker Compose with no self-healing, CubeOS uses **Docker Swarm** with automatic service reconciliation. Where others required internet connectivity, CubeOS works in **airplane mode**. Where others ignored the hardware, CubeOS exposes **80+ REST endpoints** through a Hardware Abstraction Layer that lets any container read GPS coordinates, query battery status, or send satellite messages — without needing privileged access.
-
-And the commitment is carved into the license: **Apache 2.0, forever.** No bait-and-switch. No paywall. No "community edition" with artificial limits.
+No other lightweight platform does this. Kubernetes solves it with Node Feature Discovery plus a constellation of device plugins and operators — hundreds of thousands of lines across dozens of projects that only work inside Kubernetes. CubeOS provides the same capability in a single binary, running on a $80 Raspberry Pi, with zero Kubernetes overhead.
 
 > *CubeOS runs 800+ apps from the CasaOS ecosystem through its Compose-to-Swarm compatibility layer — giving you the same app store experience, with self-healing containers underneath.*
 
@@ -57,7 +55,7 @@ Manage Docker containers, view real-time logs, monitor CPU/RAM/storage/temperatu
 
 ### Self-Healing Containers
 
-Docker Swarm continuously monitors every service. If a container crashes, Swarm automatically restarts it. If a node goes down in a multi-node cluster, workloads redistribute. This is the same orchestration technology used in production data centres — running on a $80 Raspberry Pi.
+Docker Swarm continuously monitors every service. If a container crashes, Swarm automatically restarts it. If a node goes down in a multi-node cluster, workloads redistribute. Combined with the HAL's dynamic node labelling, services with hardware constraints automatically follow their devices — move a Coral TPU from Node 1 to Node 3 and the dependent container migrates with it. This is production-grade orchestration running on a $80 Raspberry Pi.
 
 ### WiFi Access Point
 
@@ -77,7 +75,24 @@ Install self-hosted apps instantly. CubeOS is compatible with the **CasaOS app e
 
 ### Hardware Abstraction Layer (HAL)
 
-A unique privileged microservice that exposes Pi hardware through a REST API. Application containers stay unprivileged and secure — they talk to the HAL, not to raw `/dev` devices.
+The HAL is a privileged Go microservice running on each node that solves three problems Docker Swarm ignores:
+
+**1. Automatic hardware discovery and Swarm label management.** The HAL scans USB, PCIe, I2C, GPIO, and system buses on startup and on hotplug events (via udev). It translates what it finds into Docker Swarm node labels through the Docker API — automatically. Plug a Coral TPU into Node 2 and the label `hw.usb.coral-tpu=true` appears. Unplug it, the label disappears. Swarm services with hardware constraints (`--constraint 'node.labels.hw.usb.coral-tpu==true'`) automatically reschedule to follow the hardware. No SSH, no manual labels, no human memory required.
+
+**2. Network-transparent device access.** Low-bandwidth devices (serial radios, GPS receivers, sensors, satellite modems, GPIO, I2C) are exposed as REST API endpoints that any container on any node can call over the network. A Meshtastic gateway container running on Node 1 can read the GPS position from a receiver plugged into Node 3 — it's just an HTTP call to `http://node3.cubeos.cube:6005/api/v1/gps/position`. The container doesn't know or care which node the hardware is on.
+
+**3. Semantic device APIs instead of raw passthrough.** Containers don't get raw `/dev/ttyUSB0` access. They get purpose-built endpoints: `POST /api/v1/devices/iridium/send`, `GET /api/v1/devices/meshtastic/nodes`, `POST /api/v1/gpio/write`. The Go drivers handle protocol details. Containers stay unprivileged and secure.
+
+The HAL recognises two classes of hardware and handles them differently:
+
+| Class | Examples | Mechanism | Container placement |
+|-------|----------|-----------|-------------------|
+| **Network-transparent** | Serial radios, GPS, Zigbee, LoRa, satellite modems, GPIO, I2C sensors | REST API over LAN | Runs on **any** node |
+| **Co-location required** | GPU, TPU, iGPU, high-res cameras, NVMe, capture cards | Swarm labels + device passthrough | Scheduled to **device node** |
+
+The distinction is bandwidth. A serial modem at 9600 baud generates bytes per second — trivial over a 1Gbps LAN. A Coral TPU processing video frames at 30fps requires direct PCI/USB bus access. The HAL makes this distinction automatically and applies the right strategy for each device.
+
+**Hardware capabilities across all nodes:**
 
 | Category | Capabilities |
 |----------|-------------|
@@ -115,6 +130,8 @@ Every component is designed to work without internet connectivity:
 
 ## Architecture
 
+### Single Node
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Browser / Phone                                                    │
@@ -131,6 +148,7 @@ Every component is designed to work without internet connectivity:
                │  ┌──────────────▼──────────────────────────────────┐
                │  │  HAL Service (Go, privileged)                    │
                │  │  80+ REST endpoints · Swagger UI · SSE streams   │
+               │  │  Auto-discovery · Dynamic Swarm labels · udev    │
                │  └──────────────┬──────────────────────────────────┘
                │                 │
 ┌──────────────▼─────────────────▼────────────────────────────────────┐
@@ -139,11 +157,42 @@ Every component is designed to work without internet connectivity:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### Multi-Node Cluster
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Dashboard — unified view of all nodes and devices                   │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+┌──────────────────────────────▼──────────────────────────────────────┐
+│  CubeOS API — aggregates HAL data from every node                    │
+└──────┬──────────────────┬──────────────────┬───────────────────────┘
+       │                  │                  │
+┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
+│   Node 1    │    │   Node 2    │    │   Node 3    │
+│   HAL API   │◄──►│   HAL API   │◄──►│   HAL API   │
+│             │LAN │             │LAN │             │
+│ 🔌 Coral TPU│    │ 🔌 GPS      │    │ 🔌 LoRa     │
+│ 🔌 Zigbee   │    │ 🔌 Iridium  │    │ 🔌 NVMe     │
+│             │    │             │    │             │
+│  Docker     │    │  Docker     │    │  Docker     │
+│  Engine     │    │  Engine     │    │  Engine     │
+└─────────────┘    └─────────────┘    └─────────────┘
+
+Any container on any node can access any device on any other node:
+  GET http://node2.cubeos.cube:6005/api/v1/gps/position    ← from Node 1
+  POST http://node2.cubeos.cube:6005/api/v1/iridium/send   ← from Node 3
+
+High-bandwidth devices (GPU, TPU) use Swarm label constraints instead:
+  Frigate → auto-scheduled to Node 1 (hw.usb.coral-tpu=true)
+```
+
 **Design principles:**
 
 - **Unprivileged by default** — Only 3 services need host access (Pi-hole, NPM, HAL). Everything else runs in isolated Swarm stacks.
-- **HAL abstracts hardware** — Apps don't care if the GPS is USB, I2C, or Bluetooth. They call the same REST endpoint.
-- **Swarm enables resilience** — Self-healing, rolling updates, secrets management, and future multi-node clustering.
+- **Hardware is discovered, not configured** — Plug a device in. The HAL sees it, labels the node, exposes the API. No manual setup.
+- **Two strategies for two classes** — Low-bandwidth devices are network-transparent (REST API over LAN). High-bandwidth devices use co-location (Swarm labels + device passthrough).
+- **Swarm stays unmodified** — No forked Docker, no custom scheduler. The HAL feeds Swarm information through standard node labels. Swarm's existing constraint-based scheduling does the rest.
 - **Backend-for-Frontend pattern** — The Dashboard talks only to the API. The API talks to HAL. Security boundaries are enforced at every layer.
 
 ---
@@ -155,8 +204,10 @@ Every component is designed to work without internet connectivity:
 | **Status** | Active development | Abandoned (last release Dec 2024) | Active | Active |
 | **License** | Apache 2.0 | Apache 2.0 | PolyForm Noncommercial | Apache 2.0 |
 | **Orchestration** | Docker Swarm (self-healing) | Docker Compose | Docker Compose | Custom Supervisor |
+| **Hardware abstraction** | 80+ REST endpoints, auto-discovery | None | None | Add-on config files |
+| **Network-transparent HW** | Any container accesses any device on any node | No | No | No |
+| **Dynamic HW scheduling** | Auto-labels Swarm nodes on hotplug | No | No | No |
 | **Offline operation** | Full (local registry + AP) | No | No | Partial |
-| **Hardware abstraction** | 80+ REST endpoints | None | None | Add-on config files |
 | **Multi-node ready** | Swarm native | No | No | No |
 | **WiFi access point** | 3 modes built-in | No | No | No |
 | **ARM64 native** | Pi 5/4, any ARM64 SBC | ARM64 + x86 | Pi 5, x86 | Pi 5/4 only |
@@ -297,7 +348,7 @@ NVIDIA ships the DGX Spark (128 GB unified GPU memory, ARM64) with zero web-base
 | **2 × DGX Spark** | Load-balanced replicas — doubles throughput, adds redundancy and zero-downtime updates |
 | **4 × DGX Spark** | Distributed inference — pool GPU memory via Ray cluster for 200B+ parameter models |
 
-**Architecture difference:** CubeOS-Edge uses **K3s** instead of Docker Swarm for orchestration. While Swarm is ideal for single-node Raspberry Pi deployments (lightweight, simple, Docker-native), DGX Spark clusters require Kubernetes-level features: Layer 7 routing, GPU scheduling, distributed inference coordination, and multi-node storage. The CubeOS API backend and Vue.js dashboard remain the same — only the orchestration layer changes.
+**Architecture difference:** CubeOS-Edge uses **K3s** instead of Docker Swarm for orchestration. While Swarm is ideal for single-node Raspberry Pi deployments (lightweight, simple, Docker-native), DGX Spark clusters require Kubernetes-level features: Layer 7 routing, GPU scheduling, distributed inference coordination, and multi-node storage. The CubeOS API backend, Vue.js dashboard, and HAL architecture remain the same — the HAL simply gains GPU-specific discovery (nvidia-smi, VRAM, CUDA capabilities) while the orchestration layer changes underneath.
 
 **Target hardware:** NVIDIA DGX Spark, MSI EdgeXpert, Jetson AGX Orin, any ARM64 Linux device with NVIDIA GPU. Also applicable to future GB-series products and third-party OEM variants.
 
@@ -314,7 +365,7 @@ NVIDIA ships the DGX Spark (128 GB unified GPU memory, ARM64) with zero web-base
 | **Backend** | Go 1.24+, chi router, SQLite (pure Go, no CGO) |
 | **Frontend** | Vue.js 3 + Composition API, Pinia, Tailwind CSS |
 | **Orchestration** | Docker Swarm (single-node, multi-node ready) |
-| **HAL** | Go privileged service, 80+ REST endpoints, Swagger UI |
+| **HAL** | Go privileged daemon, 80+ REST endpoints, Swagger UI, dynamic Swarm labels, udev hotplug |
 | **DNS / DHCP** | Pi-hole v6 |
 | **Reverse proxy** | Nginx Proxy Manager |
 | **Registry** | Local Docker registry with pull-through cache |
@@ -402,6 +453,11 @@ All repositories have GitLab CI/CD pipelines that auto-deploy to the Pi on push 
 - [x] Local AI with Ollama + ChromaDB RAG
 - [x] GitLab CI/CD auto-deployment pipelines
 - [x] Complete Swagger/OpenAPI documentation
+- [ ] HAL dynamic Swarm node labels (auto-discovery → label management via Docker API)
+- [ ] HAL udev hotplug monitoring (device add/remove → label update → service reschedule)
+- [ ] HAL network-transparent device access (cross-node REST API for low-bandwidth devices)
+- [ ] Dashboard hardware attachment UI (per-app device selection with one-click redeploy)
+- [ ] Multi-node HAL aggregation (unified hardware inventory across cluster)
 - [ ] Raspberry Pi Imager official listing
 - [ ] First-boot setup wizard
 - [ ] Multi-node Swarm clustering
@@ -456,7 +512,7 @@ You can use, modify, distribute, and build commercial products on CubeOS — wit
 ---
 
 <p align="center">
-  <strong>Built for expeditions, emergencies, and everyone who wants their own cloud.</strong>
+  <strong>Built for expeditions, emergencies, and everyone who wants hardware that just works — across every node.</strong>
   <br><br>
   <sub>CubeOS · Apache 2.0 · Forever free · Forever open</sub>
 </p>
