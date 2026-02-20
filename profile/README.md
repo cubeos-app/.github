@@ -57,17 +57,85 @@ Manage Docker containers, view real-time logs, monitor CPU/RAM/storage/temperatu
 
 Docker Swarm continuously monitors every service. If a container crashes, Swarm automatically restarts it. If a node goes down in a multi-node cluster, workloads redistribute. Combined with the HAL's dynamic node labelling, services with hardware constraints automatically follow their devices — move a Coral TPU from Node 1 to Node 3 and the dependent container migrates with it. This is production-grade orchestration running on a $80 Raspberry Pi.
 
-### WiFi Access Point
+### WiFi Access Point & Network Modes
 
-CubeOS turns your Pi into a portable network with integrated DNS and DHCP. Three modes adapt to any environment:
+CubeOS turns your Pi into a portable network with integrated DNS and DHCP. Five modes adapt to any environment:
 
 | Mode | Behaviour |
 |------|-----------|
 | **OFFLINE** | Air-gapped access point — no internet required |
 | **ONLINE_ETH** | Access point with internet via Ethernet uplink |
 | **ONLINE_WIFI** | Access point with internet via USB WiFi dongle |
+| **BONDED_MULTI** | Access point with **multiple WANs bonded** via MPTCP — aggregate WiFi + cellular + Ethernet into a single faster connection for all clients |
+| **MESH** | Encrypted IPv6 overlay connecting multiple CubeOS nodes (runs on top of any mode above) |
 
 Connect your phone, laptop, or IoT devices to the CubeOS network and access the dashboard at `http://cubeos.cube`.
+
+### MPTCP WAN Bonding
+
+Bond multiple internet connections into combined bandwidth for every device on the network. Hotel WiFi too slow? Add phone tethering and an Ethernet cable — CubeOS aggregates all three transparently. LAN clients need zero configuration; the bonding is invisible.
+
+| Tier | How it works | Server needed |
+|------|-------------|---------------|
+| **Serverless** | Per-connection load balancing + instant failover across WANs | None |
+| **BYOS** | True per-packet aggregation via your own VPS | User provides |
+| **MuleCube Cloud** | Managed aggregation service, one-click setup | Included |
+
+The HAL detects WAN interfaces automatically (Ethernet, WiFi client, USB tethering) and manages MPTCP subflows at the kernel level. Hot-plug a phone via USB tethering mid-session — the new link joins the bond within seconds.
+
+### GPS Time Sync & NTP Server
+
+A $12 GPS module gives CubeOS **sub-microsecond accurate time** via PPS (Pulse Per Second), independent of any internet connection. CubeOS serves this as a Stratum 1 NTP source to every device on the WiFi network — phones, laptops, sensors, and other CubeOS nodes all get accurate time automatically.
+
+This matters more than it sounds: without GPS time, offline deployments have no reliable clock source. TLS certificates, log correlation, sensor timestamps, radio protocols, and file sync all depend on accurate time. The same GPS module also provides position data for MeshSat, APRS beaconing, and offline maps.
+
+### Smart Power Management
+
+Laptop-style power profiles with battery and solar-aware automatic load shedding. CubeOS reads battery state from UPS HATs and solar charge controllers (Victron VE.Direct, EPEver Modbus), then automatically manages power consumption:
+
+| Profile | CPU | WiFi | Containers |
+|---------|-----|------|------------|
+| **Performance** | 2.4 GHz | Full power | All running |
+| **Balanced** | Dynamic | Full power | All running |
+| **Power Saver** | 1.0 GHz | Reduced range | Non-essential stopped |
+| **Critical** | 1.0 GHz | Reduced range | Only DNS, NTP, HAL |
+
+Each container has a configurable priority level. When battery drops below a threshold, CubeOS stops low-priority services first and restarts them when power recovers — with hysteresis to prevent flapping. Combined with RTC wake alarms, a solar-powered CubeOS can run a duty cycle: operate during daylight hours, deep-sleep overnight.
+
+### SDR Integration
+
+Plug in RTL-SDR USB dongles ($10–25 each) and CubeOS turns them into dedicated receivers. The HAL auto-detects dongles and the dashboard lets you assign each one to an application:
+
+| Application | What it does | Frequency |
+|-------------|-------------|-----------|
+| **ADS-B** (dump1090 + tar1090) | Track aircraft on a live map | 1090 MHz |
+| **AIS** (AIS-catcher) | Track ships and vessels | 162 MHz |
+| **Weather Satellite** (SatDump) | Receive NOAA/METEOR-M2 satellite imagery | 137 MHz |
+| **General SDR** (rtl_tcp) | Share a dongle over the network for any SDR software | Any |
+
+Each application runs as an isolated Docker container with USB device passthrough. Multiple dongles = multiple simultaneous applications.
+
+### Radio Communications
+
+When all internet infrastructure is down — no cell towers, no WiFi, no satellite data — CubeOS can still send email and track positions using amateur radio:
+
+**Pat Winlink** provides email over HF/VHF radio. Connect a $50 Digirig sound card interface between the Pi and any amateur radio, and CubeOS runs a complete Winlink client with a web-based mailbox. Peer-to-peer mode works without any infrastructure at all.
+
+**Direwolf** turns the same setup into an APRS digipeater for automatic position reporting. Field team members with handheld radios appear on the CubeOS map with real-time GPS positions.
+
+*Amateur radio license required for normal operation. FCC §97.405 permits unlicensed use in life-threatening emergencies.*
+
+### Mesh Networking
+
+Multiple CubeOS nodes auto-discover each other and form an encrypted IPv6 mesh using **Yggdrasil**. Each node gets a stable cryptographic address. The mesh runs as an overlay on top of any network mode — even OFFLINE mode, where nodes communicate directly over WiFi.
+
+The mesh enables distributed deployments: a base camp CubeOS shares its internet connection, GPS time, and satellite uplink with field nodes that only have line-of-sight WiFi links between them.
+
+*Requires a USB WiFi adapter (~$15) per node for the radio mesh layer. The built-in WiFi continues serving as the client access point.*
+
+### Kiosk Display
+
+Plug an HDMI display into the secondary port and CubeOS shows a full-screen browser pointed at any internal URL — the dashboard, Grafana metrics, offline maps, or a custom page. The primary HDMI port stays as a Linux console. Configure the display URL, page rotation, and on/off schedule from the dashboard settings. Perfect for base camp status boards, emergency operations centres, or digital signage.
 
 ### One-Click App Store
 
@@ -97,13 +165,17 @@ The distinction is bandwidth. A serial modem at 9600 baud generates bytes per se
 | Category | Capabilities |
 |----------|-------------|
 | **System** | Temperature, throttling, uptime, boot config, kernel info |
-| **Power** | UPS HATs, battery level, RTC, wake alarms, safe shutdown |
+| **Power** | UPS HATs, battery/SOC, solar charge controllers (Victron, EPEver), power profiles, load shedding, RTC wake alarms |
+| **Time** | GPS PPS time source, Stratum 1 NTP server, RTC backup, chrony peer sync |
 | **Storage** | NVMe, USB drives, SMART health, auto-mount, partition info |
-| **Network** | Interface stats, AP clients, traffic monitoring, WiFi scanning |
+| **Network** | Interface stats, AP clients, traffic monitoring, WiFi scanning, MPTCP subflows, WAN health probes |
+| **Display** | HDMI output detection, kiosk compositor control, dual-display management |
+| **SDR** | RTL-SDR dongle detection, assignment, hotplug, device sharing (rtl_tcp) |
 | **GPIO / I2C** | Pin control, bus scanning, sensor reading, PWM |
-| **Audio** | ALSA devices, volume control, capture, playback |
-| **Location** | GPS/GNSS receivers, position tracking, fix quality |
-| **Communication** | Cellular modems, Meshtastic LoRa, Iridium satellite |
+| **Audio** | ALSA devices, volume control, capture, playback, radio sound card interfaces |
+| **Location** | GPS/GNSS receivers, position tracking, fix quality, PPS timing |
+| **Communication** | Cellular modems, Meshtastic LoRa, Iridium satellite, Winlink (Pat), APRS (Direwolf) |
+| **Mesh** | Yggdrasil IPv6 overlay, batman-adv radio layer, peer discovery, USB WiFi adapter detection |
 
 ### Offline-First Architecture
 
@@ -111,8 +183,10 @@ Every component is designed to work without internet connectivity:
 
 - **Local Docker registry** caches images for offline app installation
 - **Pi-hole** provides DNS/DHCP without upstream connectivity
+- **GPS NTP server** keeps accurate time without internet NTP pools
 - **All core services** function in airplane mode
 - **Local AI** via Ollama with ChromaDB RAG — no cloud API keys needed
+- **Radio communications** (Winlink, APRS) work without any IP infrastructure
 
 ### VPN & Privacy
 
@@ -143,17 +217,19 @@ Every component is designed to work without internet connectivity:
                                  │ REST API
 ┌────────────────────────────────▼────────────────────────────────────┐
 │  CubeOS API (Go)               — Auth, Swarm orchestration, apps    │
+│                                  Power mgmt, MPTCP, SDR, mesh       │
 └──────────────┬─────────────────┬────────────────────────────────────┘
                │                 │ Internal API
                │  ┌──────────────▼──────────────────────────────────┐
                │  │  HAL Service (Go, privileged)                    │
                │  │  80+ REST endpoints · Swagger UI · SSE streams   │
                │  │  Auto-discovery · Dynamic Swarm labels · udev    │
+               │  │  GPS/NTP · Power profiles · SDR · Radio · Mesh   │
                │  └──────────────┬──────────────────────────────────┘
                │                 │
 ┌──────────────▼─────────────────▼────────────────────────────────────┐
 │  Raspberry Pi / ARM64 SBC                                           │
-│  GPIO · I2C · USB · Serial · WiFi · Bluetooth · NVMe · GPS         │
+│  GPIO · I2C · USB · Serial · WiFi · Bluetooth · NVMe · GPS · SDR   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -174,6 +250,7 @@ Every component is designed to work without internet connectivity:
 │             │LAN │             │LAN │             │
 │ 🔌 Coral TPU│    │ 🔌 GPS      │    │ 🔌 LoRa     │
 │ 🔌 Zigbee   │    │ 🔌 Iridium  │    │ 🔌 NVMe     │
+│ 🔌 RTL-SDR  │    │ 🔌 UPS      │    │ 🔌 RTL-SDR  │
 │             │    │             │    │             │
 │  Docker     │    │  Docker     │    │  Docker     │
 │  Engine     │    │  Engine     │    │  Engine     │
@@ -185,6 +262,8 @@ Any container on any node can access any device on any other node:
 
 High-bandwidth devices (GPU, TPU) use Swarm label constraints instead:
   Frigate → auto-scheduled to Node 1 (hw.usb.coral-tpu=true)
+
+Yggdrasil mesh connects nodes that lack wired LAN — WiFi-only field relay.
 ```
 
 **Design principles:**
@@ -207,11 +286,18 @@ High-bandwidth devices (GPU, TPU) use Swarm label constraints instead:
 | **Hardware abstraction** | 80+ REST endpoints, auto-discovery | None | None | Add-on config files |
 | **Network-transparent HW** | Any container accesses any device on any node | No | No | No |
 | **Dynamic HW scheduling** | Auto-labels Swarm nodes on hotplug | No | No | No |
-| **Offline operation** | Full (local registry + AP) | No | No | Partial |
+| **Offline operation** | Full (local registry + AP + GPS NTP) | No | No | Partial |
 | **Multi-node ready** | Swarm native | No | No | No |
-| **WiFi access point** | 3 modes built-in | No | No | No |
+| **WiFi access point** | 5 modes built-in (incl. MPTCP bonding, mesh) | No | No | No |
+| **WAN bonding** | MPTCP multi-path (aggregate WiFi + cellular + ETH) | No | No | No |
+| **GPS / NTP** | Sub-microsecond PPS, Stratum 1 NTP server | No | No | No |
+| **Power management** | Solar-aware load shedding, 4 profiles, RTC wake | No | No | No |
+| **SDR integration** | ADS-B, AIS, weather satellite, general SDR | No | No | Via add-ons |
+| **Radio comms** | Winlink email, APRS position tracking | No | No | No |
+| **Mesh networking** | Yggdrasil encrypted IPv6 overlay | No | No | No |
+| **Kiosk display** | Dual-HDMI, URL rotation, scheduled on/off | No | No | No |
 | **ARM64 native** | Pi 5/4, any ARM64 SBC | ARM64 + x86 | Pi 5, x86 | Pi 5/4 only |
-| **Expedition hardware** | GPS, satellite, LoRa mesh | No | No | Via integrations |
+| **Expedition hardware** | GPS, satellite, LoRa mesh, SDR, HF radio | No | No | Via integrations |
 | **App ecosystem** | 800+ (CasaOS-compatible) | 800+ (native) | ~200 | ~3000 (add-ons) |
 | **Paywall** | None, ever | N/A (abandoned) | Hardware-gated features | None |
 
@@ -234,19 +320,39 @@ CubeOS is not a single product — it's a **platform** that adapts to different 
                               │  App Store   │
                               └──────┬───────┘
                                      │
-              ┌──────────────────────┼──────────────────────┐
-              │                      │                      │
-     ┌────────▼────────┐   ┌────────▼────────┐   ┌────────▼────────┐
-     │  CubeOS-NAS     │   │ CubeOS-MeshSat  │   │  CubeOS-Edge   │
-     │                 │   │                  │   │                 │
-     │  RAID / ZFS     │   │  LoRa Mesh       │   │  NVIDIA DGX    │
-     │  Encrypted      │   │  Iridium Sat     │   │  GPU / AI      │
-     │  File Sharing   │   │  SOS Beacon      │   │  K3s Clusters  │
-     │  Backup         │   │  Offline Comms   │   │  Verticals     │
-     └─────────────────┘   └──────────────────┘   └────────────────┘
+         ┌───────────────┬───────────┼───────────┬───────────────┐
+         │               │           │           │               │
+┌────────▼────────┐ ┌────▼───────┐ ┌▼──────────┐│ ┌─────────────▼──┐
+│  CubeOS-NAS     │ │ CubeOS-    │ │ CubeOS-   ││ │  CubeOS-Edge   │
+│                 │ │ MeshSat    │ │ Field     ││ │                │
+│  RAID / ZFS     │ │            │ │           ││ │  NVIDIA DGX    │
+│  Encrypted      │ │  LoRa Mesh │ │  GPS/NTP  ││ │  GPU / AI      │
+│  File Sharing   │ │  Iridium   │ │  SDR      ││ │  K3s Clusters  │
+│  Backup         │ │  SOS       │ │  Winlink  ││ │  Verticals     │
+│                 │ │  Offline   │ │  Solar    ││ │                │
+└─────────────────┘ └────────────┘ │  Mesh     ││ └────────────────┘
+                                   └───────────┘│
+                                                │
+                             Mission Profiles ◄─┘
+                             (pre-configured app bundles)
 ```
 
 </p>
+
+### Mission Profiles
+
+Mission Profiles are pre-configured app bundles selectable at first boot or from the dashboard. Each profile installs the right combination of services for a specific deployment scenario:
+
+| Profile | What it installs |
+|---------|-----------------|
+| **Disaster Relief** | Offline maps, ODK Central (forms), captive portal, APRS, Winlink, weather satellite |
+| **Research Expedition** | Offline maps, Syncthing (file sync), Whisper (transcription), sensors, BookStack (wiki) |
+| **Maritime** | Offline maps, AIS (vessel tracking), weather satellite, Winlink, GPS NTP |
+| **Base Camp** | Offline maps, Syncthing, Navidrome (music), Frigate (NVR), sensors, solar power management |
+| **Education** | Calibre-web (ebooks), Etherpad (collaborative editing), media server, captive portal |
+| **Minimal** | CubeOS core only (current default) |
+
+Profiles are JSON manifests — zero engineering cost per profile, just curated install lists. Users can customise after selection.
 
 ---
 
@@ -369,6 +475,7 @@ NVIDIA ships the DGX Spark (128 GB unified GPU memory, ARM64) with zero web-base
 | **DNS / DHCP** | Pi-hole v6 |
 | **Reverse proxy** | Nginx Proxy Manager |
 | **Registry** | Local Docker registry with pull-through cache |
+| **Time** | gpsd + chrony (GPS PPS Stratum 1 NTP) |
 | **AI** | Ollama + ChromaDB (RAG) |
 | **Monitoring** | Dozzle (container logs) |
 | **Target hardware** | Raspberry Pi 5/4, any ARM64 SBC (2GB+ RAM) |
@@ -379,9 +486,10 @@ NVIDIA ships the DGX Spark (128 GB unified GPU memory, ARM64) with zero web-base
 
 | Repo | Description |
 |------|-------------|
-| [**api**](https://github.com/cubeos-app/api) | Go backend — REST API, Docker Swarm orchestration, HAL client, 119+ handlers |
+| [**api**](https://github.com/cubeos-app/api) | Go backend — REST API, Docker Swarm orchestration, HAL client, power manager, MPTCP manager, SDR manager |
+| [**hal**](https://github.com/cubeos-app/hal) | Go privileged daemon — hardware abstraction, GPS/NTP, power profiles, SDR detection, radio devices, mesh, display |
 | [**dashboard**](https://github.com/cubeos-app/dashboard) | Vue.js 3 frontend — Web management interface with Pinia state management |
-| [**coreapps**](https://github.com/cubeos-app/coreapps) | Docker Compose/Swarm configs for system services (HAL, Pi-hole, NPM, Ollama, etc.) |
+| [**coreapps**](https://github.com/cubeos-app/coreapps) | Docker Compose/Swarm configs for system services (Pi-hole, NPM, Ollama, SDR apps, Winlink, Yggdrasil, etc.) |
 | [**scripts**](https://github.com/cubeos-app/scripts) | Deployment, backup, watchdog, and utility scripts |
 | [**releases**](https://github.com/cubeos-app/releases) | Packer image builder and Raspberry Pi Imager manifest |
 | [**docs**](https://github.com/cubeos-app/docs) | Architecture documentation, user guides, API reference |
@@ -415,10 +523,15 @@ Default credentials: `admin` / `admin` (change on first login)
 
 | Range | Purpose |
 |-------|---------|
-| `6000–6009` | Infrastructure (Pi-hole, NPM) |
+| `6000–6009` | Infrastructure (Pi-hole, NPM, HAL) |
 | `6010–6019` | Platform (API, Dashboard, Dozzle) |
 | `6020–6029` | VPN (WireGuard, OpenVPN, Tor) |
-| `6030–6039` | AI/ML (Ollama, ChromaDB) |
+| `6030–6039` | AI/ML (Ollama, ChromaDB, DocsIndex) |
+| `6040–6049` | WAN Bonding (MPTCP proxy, tunnel, status) |
+| `6050–6059` | Satellite/Relay (MeshSat) |
+| `6060–6069` | Situational Awareness (SDR Manager, ADS-B, AIS, SatDump) |
+| `6070–6079` | Mesh + Radio (Yggdrasil, Pat Winlink, Direwolf) |
+| `6080–6099` | Reserved (future system services) |
 | `6100–6999` | User applications |
 
 ---
@@ -428,11 +541,15 @@ Default credentials: `admin` / `admin` (change on first login)
 ```bash
 # Clone the core repositories
 git clone https://github.com/cubeos-app/api.git
+git clone https://github.com/cubeos-app/hal.git
 git clone https://github.com/cubeos-app/dashboard.git
 git clone https://github.com/cubeos-app/coreapps.git
 
 # Backend development (Go)
 cd api && go build ./cmd/cubeos-api/
+
+# HAL development (Go)
+cd hal && go build ./cmd/cubeos-hal/
 
 # Frontend development (Vue.js)
 cd dashboard && npm install && npm run dev
@@ -444,7 +561,7 @@ All repositories have GitLab CI/CD pipelines that auto-deploy to the Pi on push 
 
 ## Roadmap
 
-### Core Platform
+### Core Platform (Track A)
 
 - [x] Docker Swarm orchestration with self-healing
 - [x] HAL with 80+ hardware REST endpoints
@@ -453,16 +570,40 @@ All repositories have GitLab CI/CD pipelines that auto-deploy to the Pi on push 
 - [x] Local AI with Ollama + ChromaDB RAG
 - [x] GitLab CI/CD auto-deployment pipelines
 - [x] Complete Swagger/OpenAPI documentation
+- [ ] FlowEngine (saga-pattern crash recovery for all operations)
+- [ ] Local Docker registry as single source of truth for all images
+- [ ] System updater with one-click dashboard updates
+- [ ] Backup and restore system (local, USB, NFS/SMB)
+- [ ] Raspberry Pi Imager official listing
+- [ ] First-boot setup wizard
 - [ ] HAL dynamic Swarm node labels (auto-discovery → label management via Docker API)
 - [ ] HAL udev hotplug monitoring (device add/remove → label update → service reschedule)
 - [ ] HAL network-transparent device access (cross-node REST API for low-bandwidth devices)
 - [ ] Dashboard hardware attachment UI (per-app device selection with one-click redeploy)
 - [ ] Multi-node HAL aggregation (unified hardware inventory across cluster)
-- [ ] Raspberry Pi Imager official listing
-- [ ] First-boot setup wizard
 - [ ] Multi-node Swarm clustering
-- [ ] Backup and restore system
 - [ ] Read-only root filesystem option
+
+### Hardware Platform (Track C)
+
+- [ ] **GPS time sync** — sub-microsecond PPS, Stratum 1 NTP serving all WiFi clients
+- [ ] **NTP distribution** — offline-accurate time for TLS, logs, sensors, radio protocols
+- [ ] **Smart power management** — 4 profiles (Performance → Critical), solar/battery-aware container load shedding
+- [ ] **MPTCP WAN bonding** — aggregate WiFi + cellular + Ethernet, serverless/BYOS/managed modes
+- [ ] **SDR integration** — RTL-SDR detection, per-dongle assignment, ADS-B/AIS/weather satellite/general SDR
+- [ ] **Radio communications** — Pat Winlink (email over HF), Direwolf APRS (position tracking)
+- [ ] **Yggdrasil mesh** — encrypted IPv6 overlay, auto-discovery, batman-adv radio layer
+- [ ] **Kiosk display** — dual-HDMI (console + kiosk), URL presets, rotation, scheduled on/off
+- [ ] Mission Profiles (pre-configured app bundles per deployment type)
+
+### CubeOS-MeshSat (Track B)
+
+- [ ] HAL Iridium driver (RockBLOCK AT commands, SBD protocol)
+- [ ] HAL Meshtastic driver — USB serial transport
+- [ ] HAL Meshtastic driver — BLE transport
+- [ ] Mesh-to-satellite bridge core with message queue
+- [ ] SOS beacon with state machine and GPIO trigger
+- [ ] Web UI (mesh node map, message history, diagnostics)
 
 ### CubeOS-NAS
 
@@ -471,15 +612,6 @@ All repositories have GitLab CI/CD pipelines that auto-deploy to the Pi on push 
 - [ ] Samba/NFS file sharing with user management
 - [ ] Scheduled backup engine
 - [ ] Time Machine target support
-
-### CubeOS-MeshSat
-
-- [ ] HAL Iridium driver (RockBLOCK AT commands, SBD protocol)
-- [ ] HAL Meshtastic driver — USB serial transport
-- [ ] HAL Meshtastic driver — BLE transport
-- [ ] Mesh-to-satellite bridge core with message queue
-- [ ] SOS beacon with state machine and GPIO trigger
-- [ ] Web UI (mesh node map, message history, diagnostics)
 
 ### CubeOS-Edge
 
