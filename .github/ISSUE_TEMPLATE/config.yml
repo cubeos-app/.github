@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: GitHub Discussions — Q&A
+    url: https://github.com/cubeos-app/releases/discussions
+    about: Ask questions and get help from the community
+  - name: Installation Guides
+    url: https://get.cubeos.app/install/
+    about: Step-by-step installation instructions
