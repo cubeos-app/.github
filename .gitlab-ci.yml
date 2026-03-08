@@ -10,7 +10,7 @@ stages:
 lint:consistency:
   stage: validate
   image: alpine:latest
-  tags: [docker]
+  tags: [multiarch]
   variables:
     GIT_DEPTH: 50
   before_script:
